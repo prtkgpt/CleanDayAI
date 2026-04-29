@@ -1,0 +1,288 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// =============================================================================
+// Auth / Users
+// =============================================================================
+
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  name          String?
+  passwordHash  String
+  role          UserRole  @default(OWNER)
+  businessId    String?
+  business      Business? @relation(fields: [businessId], references: [id], onDelete: SetNull)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+}
+
+enum UserRole {
+  OWNER
+  STAFF
+}
+
+// =============================================================================
+// Business (tenant)
+// =============================================================================
+
+model Business {
+  id            String   @id @default(cuid())
+  name          String
+  phone         String?
+  twilioNumber  String?
+  timezone      String   @default("America/Los_Angeles")
+  serviceArea   String?
+  hoursJson     Json?
+  greeting      String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  users          User[]
+  leads          Lead[]
+  customers      Customer[]
+  bookings       Booking[]
+  pricingRules   PricingRule[]
+  automations    AutomationRule[]
+  reviewRequests ReviewRequest[]
+  messages       Message[]
+}
+
+// =============================================================================
+// Lead
+// =============================================================================
+
+enum LeadStatus {
+  NEW
+  AI_CONTACTED
+  QUALIFYING
+  QUOTED
+  BOOKED
+  LOST
+  NEEDS_HUMAN
+}
+
+enum LeadSource {
+  SMS
+  WEB_FORM
+  PHONE
+  REFERRAL
+  GOOGLE
+  FACEBOOK
+  OTHER
+}
+
+model Lead {
+  id           String     @id @default(cuid())
+  businessId   String
+  business     Business   @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  name         String?
+  phone        String
+  email        String?
+  address      String?
+  zip          String?
+  serviceType  String?
+  bedrooms     Int?
+  bathrooms    Int?
+  squareFeet   Int?
+  frequency    String?
+  notes        String?
+  source       LeadSource @default(SMS)
+  status       LeadStatus @default(NEW)
+  quotedPrice  Int?
+  needsHuman   Boolean    @default(false)
+  escalationReason String?
+  lastContactedAt DateTime?
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  customer     Customer?  @relation(fields: [customerId], references: [id])
+  customerId   String?
+
+  messages     Message[]
+  bookings     Booking[]
+  reviewRequests ReviewRequest[]
+
+  @@index([businessId, status])
+  @@index([businessId, createdAt])
+  @@index([phone])
+}
+
+// =============================================================================
+// Customer
+// =============================================================================
+
+model Customer {
+  id           String   @id @default(cuid())
+  businessId   String
+  business     Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  name         String
+  phone        String
+  email        String?
+  address      String?
+  zip          String?
+  notes        String?
+  lifetimeValue Int     @default(0)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  leads     Lead[]
+  bookings  Booking[]
+  reviewRequests ReviewRequest[]
+
+  @@index([businessId])
+  @@index([phone])
+}
+
+// =============================================================================
+// Message
+// =============================================================================
+
+enum MessageDirection {
+  INBOUND
+  OUTBOUND
+}
+
+enum MessageSender {
+  CUSTOMER
+  AI
+  HUMAN
+  SYSTEM
+}
+
+model Message {
+  id          String           @id @default(cuid())
+  businessId  String
+  business    Business         @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  leadId      String?
+  lead        Lead?            @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  direction   MessageDirection
+  sender      MessageSender
+  body        String
+  twilioSid   String?
+  metadata    Json?
+  createdAt   DateTime         @default(now())
+
+  @@index([leadId, createdAt])
+  @@index([businessId, createdAt])
+}
+
+// =============================================================================
+// Booking
+// =============================================================================
+
+enum BookingStatus {
+  SCHEDULED
+  CONFIRMED
+  COMPLETED
+  CANCELED
+}
+
+model Booking {
+  id           String        @id @default(cuid())
+  businessId   String
+  business     Business      @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  leadId       String?
+  lead         Lead?         @relation(fields: [leadId], references: [id], onDelete: SetNull)
+  customerId   String?
+  customer     Customer?     @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  scheduledFor DateTime
+  durationMin  Int           @default(120)
+  serviceType  String
+  price        Int
+  address      String?
+  notes        String?
+  status       BookingStatus @default(SCHEDULED)
+  confirmedAt  DateTime?
+  completedAt  DateTime?
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  @@index([businessId, scheduledFor])
+  @@index([businessId, status])
+}
+
+// =============================================================================
+// Pricing Rules
+// =============================================================================
+
+model PricingRule {
+  id          String   @id @default(cuid())
+  businessId  String
+  business    Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  name        String
+  serviceType String
+  basePrice   Int
+  perBedroom  Int      @default(0)
+  perBathroom Int      @default(0)
+  perSqFt     Float    @default(0)
+  minPrice    Int      @default(0)
+  active      Boolean  @default(true)
+  notes       String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([businessId, active])
+}
+
+// =============================================================================
+// Automation Rules
+// =============================================================================
+
+enum AutomationType {
+  AUTO_REPLY
+  FOLLOW_UP
+  REVIEW_REQUEST
+  BOOKING_REMINDER
+}
+
+model AutomationRule {
+  id          String         @id @default(cuid())
+  businessId  String
+  business    Business       @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  type        AutomationType
+  name        String
+  enabled     Boolean        @default(true)
+  delayHours  Int            @default(0)
+  template    String
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  @@index([businessId, type, enabled])
+}
+
+// =============================================================================
+// Review Requests
+// =============================================================================
+
+enum ReviewRequestStatus {
+  PENDING
+  SENT
+  CLICKED
+  COMPLETED
+  SKIPPED
+}
+
+model ReviewRequest {
+  id          String              @id @default(cuid())
+  businessId  String
+  business    Business            @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  leadId      String?
+  lead        Lead?               @relation(fields: [leadId], references: [id], onDelete: SetNull)
+  customerId  String?
+  customer    Customer?           @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  status      ReviewRequestStatus @default(PENDING)
+  sentAt      DateTime?
+  channel     String              @default("SMS")
+  link        String?
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
+
+  @@index([businessId, status])
+}
